@@ -11,13 +11,19 @@
   <header>
     <div>
       <h1>♞ Chess Club Ladder</h1>
-      <p class="sub">Everyone starts at 1200. Tap a player to see their rating history.</p>
+      <p class="sub">Everyone starts at 1200. Tap a player to see their stats.</p>
     </div>
     <a class="sub" href="admin.html">Admin</a>
   </header>
 
   <div class="card scroll"><table id="board"></table></div>
   <div id="detail"></div>
+
+  <h2>Match preview</h2>
+  <div class="card">
+    <div class="row"><select id="pa"></select><select id="pb"></select></div>
+    <div id="preview"></div>
+  </div>
 
   <h2>Recent games</h2>
   <div class="card scroll"><table id="games"></table></div>
@@ -27,36 +33,43 @@
 <script src="elo.js"></script>
 <script>
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const sg = (n, d = 1) => { const r = Math.round(n * 10 ** d) / 10 ** d; return (r >= 0 ? "+" : "−") + Math.abs(r).toFixed(d); };
+const $ = (id) => document.getElementById(id);
 let result;
 
 function render(data) {
   result = Elo.compute(data);
-  const board = document.getElementById("board");
+  renderBoard(); renderGames(); setupPreview();
+}
+
+function renderBoard() {
+  const board = $("board");
   if (!result.ranked.length) {
     board.innerHTML = '<tr><td class="muted">No players yet. Check back soon.</td></tr>';
-  } else {
-    board.innerHTML =
-      '<tr><th>#</th><th>Player</th><th class="num">Elo</th><th class="num">W</th><th class="num">L</th><th class="num">D</th></tr>' +
-      result.ranked.map((p) =>
-        `<tr class="clickable rank${p.rank}" data-name="${esc(p.name)}">
-           <td>${p.rank}</td>
-           <td>${esc(p.name)}${p.games < Elo.NEW_GAMES ? '<span class="pill">?</span>' : ""}</td>
-           <td class="num"><b>${Math.round(p.rating)}</b></td>
-           <td class="num">${p.wins}</td><td class="num">${p.losses}</td><td class="num">${p.draws}</td>
-         </tr>`).join("");
-    board.querySelectorAll("tr.clickable").forEach((tr) =>
-      tr.addEventListener("click", () => showPlayer(tr.dataset.name)));
+    return;
   }
+  board.innerHTML =
+    '<tr><th>#</th><th>Player</th><th class="num">Elo</th><th class="num">W</th><th class="num">L</th><th class="num">D</th></tr>' +
+    result.ranked.map((p) =>
+      `<tr class="clickable rank${p.rank}" data-name="${esc(p.name)}">
+         <td>${p.rank}</td>
+         <td>${esc(p.name)}${p.games < Elo.NEW_GAMES ? '<span class="pill">?</span>' : ""}</td>
+         <td class="num"><b>${Math.round(p.rating)}</b></td>
+         <td class="num">${p.wins}</td><td class="num">${p.losses}</td><td class="num">${p.draws}</td>
+       </tr>`).join("");
+  board.querySelectorAll("tr.clickable").forEach((tr) =>
+    tr.addEventListener("click", () => showPlayer(tr.dataset.name)));
+}
 
-  const g = document.getElementById("games");
+function renderGames() {
   const recent = result.log.slice(-15).reverse();
-  g.innerHTML = recent.length
+  $("games").innerHTML = recent.length
     ? recent.map((x) => {
         const res = x.result === "draw" ? "drew with" : x.result === "a" ? "beat" : "lost to";
-        const d = Math.round(x.aAfter - x.aBefore);
+        const d = x.aAfter - x.aBefore;
         return `<tr><td class="muted">${esc(x.date)}</td>
                 <td>${esc(x.a)} ${res} ${esc(x.b)}</td>
-                <td class="num ${d >= 0 ? "up" : "down"}">${d >= 0 ? "+" : ""}${d} / ${-d >= 0 ? "+" : ""}${-d}</td></tr>`;
+                <td class="num ${d >= 0 ? "up" : "down"}">${sg(d, 0)} / ${sg(-d, 0)}</td></tr>`;
       }).join("")
     : '<tr><td class="muted">No games recorded yet.</td></tr>';
 }
@@ -64,6 +77,9 @@ function render(data) {
 function showPlayer(name) {
   const p = result.ranked.find((r) => r.name === name);
   if (!p) return;
+  const st = Elo.playerStats(name, result.log);
+
+  // rating history sparkline
   const h = p.history, w = 600, ht = 90, pad = 6;
   const min = Math.min(...h), max = Math.max(...h), span = Math.max(max - min, 20);
   const pts = h.map((v, i) => {
@@ -71,26 +87,80 @@ function showPlayer(name) {
     const y = ht - pad - ((v - min) / span) * (ht - 2 * pad);
     return x.toFixed(1) + "," + y.toFixed(1);
   }).join(" ");
-  const games = result.log.filter((x) => x.a === name || x.b === name).slice(-8).reverse();
-  document.getElementById("detail").innerHTML = `
+
+  const winRate = p.games ? Math.round(((p.wins + 0.5 * p.draws) / p.games) * 100) + "%" : "—";
+  const word = { W: "win", L: "loss", D: "draw" };
+  const streak = st.streak.type
+    ? `${st.streak.len} ${word[st.streak.type]}${st.streak.len > 1 ? (st.streak.type === "L" ? "es" : "s") : ""}`
+    : "—";
+  const upset = st.upset ? `${esc(st.upset.opp)} (${Math.round(st.upset.oppRating)})` : "—";
+
+  const h2h = st.h2h.length
+    ? `<div class="h">Head to head</div><table>` +
+      st.h2h.map((r) => `<tr><td>${esc(r.opp)}</td><td class="num">${r.w}W ${r.l}L ${r.d}D</td></tr>`).join("") + "</table>"
+    : "";
+  const recent = result.log.filter((x) => x.a === name || x.b === name).slice(-6).reverse().map((x) => {
+    const me = x.a === name, opp = me ? x.b : x.a;
+    const out = x.result === "draw" ? "Draw" : (x.result === "a") === me ? "Win" : "Loss";
+    const d = me ? x.aAfter - x.aBefore : x.bAfter - x.bBefore;
+    return `<div class="sub">${esc(x.date)} · ${out} vs ${esc(opp)} (${sg(d, 0)})</div>`;
+  }).join("");
+
+  $("detail").innerHTML = `
     <div class="card">
-      <b>${esc(name)}</b> · rank #${p.rank} · ${Math.round(p.rating)} Elo · ${p.wins}W ${p.losses}L ${p.draws}D
+      <b style="font-size:1.15rem">${esc(name)}</b>
+      <span class="muted"> · rank #${p.rank} of ${result.ranked.length}</span>
       <svg class="spark" viewBox="0 0 ${w} ${ht}" preserveAspectRatio="none">
         <polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="2.5" vector-effect="non-scaling-stroke"/>
       </svg>
-      ${games.map((x) => {
-        const me = x.a === name, opp = me ? x.b : x.a;
-        const out = x.result === "draw" ? "Draw" : (x.result === "a") === me ? "Win" : "Loss";
-        return `<div class="sub">${esc(x.date)} · ${out} vs ${esc(opp)}</div>`;
-      }).join("")}
+      <div class="stats">
+        <div><span class="k">Rating</span><span class="v">${Math.round(p.rating)}</span></div>
+        <div><span class="k">Peak</span><span class="v">${Math.round(st.peak)}</span></div>
+        <div><span class="k">Record</span><span class="v">${p.wins}-${p.losses}-${p.draws}</span></div>
+        <div><span class="k">Win rate</span><span class="v">${winRate}</span></div>
+        <div><span class="k">Current streak</span><span class="v">${streak}</span></div>
+        <div><span class="k">Best win streak</span><span class="v">${st.bestWinStreak}</span></div>
+        <div><span class="k">Biggest upset</span><span class="v">${upset}</span></div>
+      </div>
+      ${st.form.length ? `<div class="h">Last ${st.form.length}</div><div class="chips">${st.form.map((f) => `<span class="chip ${f}">${f}</span>`).join("")}</div>` : ""}
+      ${h2h}
+      ${recent ? `<div class="h">Recent games</div>${recent}` : ""}
     </div>`;
-  document.getElementById("detail").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  $("detail").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function setupPreview() {
+  const names = result.ranked.map((p) => p.name);
+  if (names.length < 2) { $("preview").innerHTML = '<p class="sub">Needs at least two players.</p>'; return; }
+  const opts = names.map((n) => `<option>${esc(n)}</option>`).join("");
+  $("pa").innerHTML = opts; $("pb").innerHTML = opts;
+  $("pa").value = names[0]; $("pb").value = names[1];
+  $("pa").onchange = $("pb").onchange = drawPreview;
+  drawPreview();
+}
+
+function drawPreview() {
+  const a = $("pa").value, b = $("pb").value;
+  if (a === b) { $("preview").innerHTML = '<p class="sub">Pick two different players.</p>'; return; }
+  const A = result.ranked.find((p) => p.name === a), B = result.ranked.find((p) => p.name === b);
+  const pv = Elo.preview(A, B);
+  const pa = Math.round(pv.expA * 100), pb = 100 - pa;
+  const row = (label, o) =>
+    `<tr><td>${label}</td><td class="num ${o.a >= 0 ? "up" : "down"}">${sg(o.a)}</td><td class="num ${o.b >= 0 ? "up" : "down"}">${sg(o.b)}</td></tr>`;
+  $("preview").innerHTML = `
+    <div class="bar"><div style="width:${pa}%"></div></div>
+    <div class="barlabels"><span><b>${esc(a)}</b> ${Math.round(A.rating)} · ${pa}%</span><span>${pb}% · ${Math.round(B.rating)} <b>${esc(b)}</b></span></div>
+    <div class="scroll"><table>
+      <tr><th>If…</th><th class="num">${esc(a)}</th><th class="num">${esc(b)}</th></tr>
+      ${row(esc(a) + " wins", pv.win)}${row("Draw", pv.draw)}${row(esc(b) + " wins", pv.loss)}
+    </table></div>
+    <p class="sub">Win chance comes from the rating gap. Points at stake depend on each player's K-factor (${esc(a)} ${pv.kA}, ${esc(b)} ${pv.kB}).</p>`;
 }
 
 fetch("data.json?_=" + Date.now())
   .then((r) => r.json())
   .then(render)
-  .catch(() => (document.getElementById("board").innerHTML = '<tr><td class="err">Could not load ladder data.</td></tr>'));
+  .catch(() => ($("board").innerHTML = '<tr><td class="err">Could not load ladder data.</td></tr>'));
 </script>
 </body>
 </html>

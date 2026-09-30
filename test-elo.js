@@ -1,41 +1,46 @@
 // Run with: node test-elo.js
 const assert = require("assert");
 const Elo = require("./elo.js");
-
+const near = (a, b) => Math.abs(a - b) < 1e-9;
 const base = { players: ["Alice", "Bob", "Cara"], games: [] };
+const get = (r, n) => r.ranked.find((p) => p.name === n);
 
-// Everyone starts equal
-let r = Elo.compute(base);
-assert(r.ranked.every((p) => p.rating === 1200));
-
-// Equal players expect 0.5
+assert(Elo.compute(base).ranked.every((p) => p.rating === 1200));
 assert.strictEqual(Elo.expected(1200, 1200), 0.5);
 
-// A win moves points; total is conserved when both K match
-r = Elo.compute({ ...base, games: [{ date: "d", a: "Alice", b: "Bob", result: "a" }] });
-const al = r.ranked.find((p) => p.name === "Alice"), bo = r.ranked.find((p) => p.name === "Bob");
-assert(al.rating > 1200 && bo.rating < 1200);
-assert(Math.abs(al.rating + bo.rating - 2400) < 1e-9);
+let r = Elo.compute({ ...base, games: [{ date: "d", a: "Alice", b: "Bob", result: "a" }] });
+assert(near(get(r, "Alice").rating, 1220) && near(get(r, "Bob").rating, 1180));
 assert.strictEqual(r.ranked[0].name, "Alice");
 
-// Upset gains more than an expected win
-const upset = Elo.compute({ players: ["L", "H"], games: [
-  ...Array(0), { a: "L", b: "H", result: "a" }] });
-assert.strictEqual(Math.round(upset.ranked[0].rating), 1220); // equal start baseline
-const gainUpset = 40 * (1 - Elo.expected(1200, 1600));
-const gainEasy = 40 * (1 - Elo.expected(1600, 1200));
-assert(gainUpset > gainEasy);
-
-// Draw between equals changes nothing
-r = Elo.compute({ ...base, games: [{ date: "d", a: "Alice", b: "Bob", result: "draw" }] });
-assert(r.ranked.every((p) => p.rating === 1200));
-
-// Loss result ("b") works
-r = Elo.compute({ ...base, games: [{ date: "d", a: "Alice", b: "Bob", result: "b" }] });
-assert.strictEqual(r.ranked[0].name, "Bob");
-
-// K drops after 10 games
+assert(Elo.compute({ ...base, games: [{ a: "Alice", b: "Bob", result: "draw" }] }).ranked.every((p) => p.rating === 1200));
+assert.strictEqual(Elo.compute({ ...base, games: [{ a: "Alice", b: "Bob", result: "b" }] }).ranked[0].name, "Bob");
+assert(40 * (1 - Elo.expected(1200, 1600)) > 40 * (1 - Elo.expected(1600, 1200)));
 assert.strictEqual(Elo.kFactor(9), 40);
 assert.strictEqual(Elo.kFactor(10), 24);
 
-console.log("all tests passed");
+// preview matches what a real game does
+const p = Elo.preview({ rating: 1200, games: 0 }, { rating: 1200, games: 0 });
+assert(near(p.expA, 0.5) && near(p.win.a, 20) && near(p.win.b, -20) && near(p.draw.a, 0) && near(p.loss.a, -20));
+const up = Elo.preview({ rating: 1200, games: 20 }, { rating: 1600, games: 20 });
+assert(up.expA < 0.1 && up.win.a > 20 && up.loss.a > -3);
+
+// player stats
+const games = [
+  { date: "2026-01-01", a: "Alice", b: "Bob", result: "a" },
+  { date: "2026-01-02", a: "Alice", b: "Cara", result: "a" },
+  { date: "2026-01-03", a: "Bob", b: "Alice", result: "a" },   // Bob beats Alice
+  { date: "2026-01-04", a: "Alice", b: "Bob", result: "draw" },
+];
+const res = Elo.compute({ ...base, games });
+const s = Elo.playerStats("Alice", res.log);
+assert.strictEqual(s.games, 4);
+assert.strictEqual(s.bestWinStreak, 2);
+assert.deepStrictEqual(s.streak, { type: "D", len: 1 });
+assert.deepStrictEqual(s.form, ["W", "W", "L", "D"]);
+const bob = s.h2h.find((h) => h.opp === "Bob");
+assert.deepStrictEqual([bob.w, bob.l, bob.d], [1, 1, 1]);
+assert(s.peak > 1200);
+const bs = Elo.playerStats("Bob", res.log);
+assert.strictEqual(bs.upset.opp, "Alice"); // Bob beat the higher-rated Alice
+
+console.log("elo tests passed");

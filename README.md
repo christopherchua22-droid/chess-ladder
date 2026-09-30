@@ -20,6 +20,7 @@ time the page loads, so `data.json` (players + games) is the only source of trut
    - Permissions: **Contents → Read and write**
    - Copy the token (it starts with `github_pat_`).
 5. Open `/admin.html` on your site, paste the token, and sign in.
+6. (Optional) In the admin page, scroll to **Password login**, choose a long password, and save. From then on you sign in with the password instead of the token.
 
 ## Using it
 
@@ -27,6 +28,17 @@ time the page loads, so `data.json` (players + games) is the only source of trut
 - Each action is saved as a commit. The public page updates about a minute later
   (the time GitHub Pages needs to redeploy).
 - **Undo last game** removes the most recent game if you make a mistake.
+
+## Password login: how it works and its limits
+
+The password encrypts your token (AES-256-GCM, key stretched with 600,000 rounds of PBKDF2)
+and the encrypted result is saved as `vault.json` in the repo. Signing in with the password
+decrypts it in your browser. The password itself is never stored or sent anywhere.
+
+Because the repo is public, anyone can download `vault.json` and try to guess the password
+offline. A long passphrase (four or more random words) makes that impractical; a short or
+common password does not. The token only reaches this one repo's contents, and you can revoke
+it any time in GitHub settings, which also disables the password login.
 
 ## Notes
 
@@ -41,4 +53,5 @@ time the page loads, so `data.json` (players + games) is the only source of trut
 
 ```bash
 node test-elo.js
+node test-vault.js
 ```

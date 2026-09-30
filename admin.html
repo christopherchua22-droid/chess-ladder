@@ -10,16 +10,27 @@
 <body>
 <div class="wrap">
   <header>
-    <div><h1>Ladder Admin</h1><p class="sub">Only someone with write access to the repo can save changes.</p></div>
+    <div><h1>Ladder Admin</h1><p class="sub">Only the club admin can save changes.</p></div>
     <a class="sub" href="index.html">← Leaderboard</a>
   </header>
 
   <div class="card" id="login">
-    <p class="sub" style="margin-top:0">Sign in with a GitHub fine-grained personal access token (Contents: read &amp; write, this repo only). It is stored only in this browser.</p>
-    <div class="row">
-      <input id="token" type="password" placeholder="github_pat_..." autocomplete="off">
-      <button id="signin">Sign in</button>
+    <div id="pwPane" hidden>
+      <div class="row">
+        <input id="pw" type="password" placeholder="Password" autocomplete="current-password">
+        <button id="unlock">Sign in</button>
+      </div>
+      <p class="sub" style="margin:10px 0 0"><a href="#" id="toToken">Use a GitHub token instead</a></p>
     </div>
+    <div id="tokPane">
+      <p class="sub" style="margin-top:0">Sign in with a GitHub fine-grained token (Contents: read &amp; write, this repo only). After that you can set a password so you don't need the token again.</p>
+      <div class="row">
+        <input id="token" type="password" placeholder="github_pat_..." autocomplete="off">
+        <button id="signin">Sign in</button>
+      </div>
+      <p class="sub" style="margin:10px 0 0" id="toPwWrap" hidden><a href="#" id="toPw">Use password instead</a></p>
+    </div>
+    <label class="sub" style="display:block;margin-top:12px"><input type="checkbox" id="stay" style="width:auto;padding:0"> Stay signed in on this device</label>
     <div class="msg err" id="loginMsg"></div>
   </div>
 
@@ -59,12 +70,25 @@
 
     <h2>Standings</h2>
     <div class="card scroll"><table id="board"></table></div>
+
+    <h2>Password login</h2>
+    <div class="card">
+      <p class="sub" style="margin-top:0">Set a password so you can sign in without the token. Use a long passphrase (12+ characters, such as four random words). Anyone who guesses it can edit your ladder.</p>
+      <div class="row">
+        <input id="newPw" type="password" placeholder="New password" autocomplete="new-password">
+        <input id="newPw2" type="password" placeholder="Confirm password" autocomplete="new-password">
+        <button id="setPw">Save password</button>
+      </div>
+      <div class="msg" id="pwMsg"></div>
+    </div>
+
     <div class="msg" id="msg"></div>
   </div>
 </div>
 
 <script src="config.js"></script>
 <script src="elo.js"></script>
+<script src="vault.js"></script>
 <script>
 const C = window.LADDER_CONFIG;
 const $ = (id) => document.getElementById(id);
@@ -72,7 +96,7 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;"
 const b64enc = (s) => btoa(unescape(encodeURIComponent(s)));
 const b64dec = (b) => decodeURIComponent(escape(atob(b.replace(/\n/g, ""))));
 const API = `https://api.github.com/repos/${C.owner}/${C.repo}`;
-let token = null, data = null, sha = null;
+let token = null, data = null, sha = null, vault = null;
 
 function say(text, isErr) { $("msg").textContent = text; $("msg").className = "msg" + (isErr ? " err" : ""); }
 
@@ -103,6 +127,15 @@ async function save(message) {
   }
 }
 
+async function saveVault(obj) {
+  let vsha;
+  try { vsha = (await gh(`${API}/contents/vault.json?ref=${C.branch}&_=${Date.now()}`)).sha; }
+  catch (e) { if (e.status !== 404) throw e; }
+  const body = { message: "Update admin password", branch: C.branch, content: b64enc(JSON.stringify(obj, null, 2) + "\n") };
+  if (vsha) body.sha = vsha;
+  await gh(`${API}/contents/vault.json`, { method: "PUT", body: JSON.stringify(body) });
+}
+
 function refresh() {
   const { ranked, log } = Elo.compute(data);
   const opts = data.players.map((n) => `<option>${esc(n)}</option>`).join("");
@@ -131,7 +164,7 @@ function refresh() {
   $("undo").disabled = !data.games.length;
 }
 
-async function signin(t) {
+async function signin(t, remember) {
   token = t;
   $("loginMsg").textContent = "";
   try {
@@ -143,12 +176,13 @@ async function signin(t) {
     $("loginMsg").textContent = e.message === "no-write"
       ? "That token can't write to this repo."
       : "Sign-in failed. Check the token and the owner/repo in config.js.";
-    return;
+    return false;
   }
-  localStorage.setItem("ladderToken", t);
+  if (remember) localStorage.setItem("ladderToken", t); else localStorage.removeItem("ladderToken");
   $("login").hidden = true; $("app").hidden = false;
   $("who").textContent = `Editing ${C.owner}/${C.repo}`;
   refresh();
+  return true;
 }
 
 async function withSaving(fn) {
@@ -156,9 +190,35 @@ async function withSaving(fn) {
   try { await fn(); } finally { document.querySelectorAll("button").forEach((b) => (b.disabled = false)); refresh(); }
 }
 
-$("signin").onclick = () => { const t = $("token").value.trim(); if (t) signin(t); };
+function showPane(pw) {
+  $("pwPane").hidden = !pw; $("tokPane").hidden = pw;
+  $("toPwWrap").hidden = !vault;
+  $("loginMsg").textContent = "";
+}
+
+// --- login ---
+$("signin").onclick = () => { const t = $("token").value.trim(); if (t) signin(t, $("stay").checked); };
+$("token").addEventListener("keydown", (e) => { if (e.key === "Enter") $("signin").click(); });
+$("toToken").onclick = (e) => { e.preventDefault(); showPane(false); };
+$("toPw").onclick = (e) => { e.preventDefault(); showPane(true); };
+
+async function unlock() {
+  const pw = $("pw").value;
+  if (!pw) return;
+  $("unlock").disabled = true;
+  $("loginMsg").textContent = "";
+  let t;
+  try { t = await Vault.decrypt(vault, pw); }
+  catch (e) { $("loginMsg").textContent = "Wrong password."; $("unlock").disabled = false; return; }
+  await signin(t, $("stay").checked);
+  $("unlock").disabled = false;
+}
+$("unlock").onclick = unlock;
+$("pw").addEventListener("keydown", (e) => { if (e.key === "Enter") unlock(); });
+
 $("signout").onclick = () => { localStorage.removeItem("ladderToken"); location.reload(); };
 
+// --- ladder actions ---
 $("addPlayer").onclick = () => withSaving(async () => {
   const name = $("newName").value.trim();
   if (!name) return say("Enter a name.", true);
@@ -195,8 +255,31 @@ async function removePlayer(name) {
   });
 }
 
-const saved = localStorage.getItem("ladderToken");
-if (saved) signin(saved);
+// --- set / change password ---
+$("setPw").onclick = () => withSaving(async () => {
+  const pw = $("newPw").value, pw2 = $("newPw2").value;
+  const m = $("pwMsg");
+  m.className = "msg err";
+  if (pw.length < 12) return (m.textContent = "Use at least 12 characters.");
+  if (pw !== pw2) return (m.textContent = "Passwords don't match.");
+  m.className = "msg"; m.textContent = "Saving…";
+  try {
+    await saveVault(await Vault.encrypt(token, pw));
+    $("newPw").value = ""; $("newPw2").value = "";
+    m.textContent = "Password saved. Next time you can sign in with it.";
+  } catch (e) { m.className = "msg err"; m.textContent = "Couldn't save the password (" + e.message + ")."; }
+});
+
+// --- startup ---
+(async function init() {
+  const saved = localStorage.getItem("ladderToken");
+  if (saved && (await signin(saved, true))) return;
+  try {
+    const r = await fetch("vault.json?_=" + Date.now());
+    if (r.ok) vault = await r.json();
+  } catch (e) {}
+  showPane(!!vault);
+})();
 </script>
 </body>
 </html>
