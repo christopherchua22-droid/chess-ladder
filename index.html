@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chess Club Ladder</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>♞ Chess Club Ladder</h1>
+      <p class="sub">Everyone starts at 1200. Tap a player to see their rating history.</p>
+    </div>
+    <a class="sub" href="admin.html">Admin</a>
+  </header>
+
+  <div class="card scroll"><table id="board"></table></div>
+  <div id="detail"></div>
+
+  <h2>Recent games</h2>
+  <div class="card scroll"><table id="games"></table></div>
+  <p class="sub">A “?” means a player is still provisional (fewer than 10 games), so their rating moves faster.</p>
+</div>
+
+<script src="elo.js"></script>
+<script>
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let result;
+
+function render(data) {
+  result = Elo.compute(data);
+  const board = document.getElementById("board");
+  if (!result.ranked.length) {
+    board.innerHTML = '<tr><td class="muted">No players yet. Check back soon.</td></tr>';
+  } else {
+    board.innerHTML =
+      '<tr><th>#</th><th>Player</th><th class="num">Elo</th><th class="num">W</th><th class="num">L</th><th class="num">D</th></tr>' +
+      result.ranked.map((p) =>
+        `<tr class="clickable rank${p.rank}" data-name="${esc(p.name)}">
+           <td>${p.rank}</td>
+           <td>${esc(p.name)}${p.games < Elo.NEW_GAMES ? '<span class="pill">?</span>' : ""}</td>
+           <td class="num"><b>${Math.round(p.rating)}</b></td>
+           <td class="num">${p.wins}</td><td class="num">${p.losses}</td><td class="num">${p.draws}</td>
+         </tr>`).join("");
+    board.querySelectorAll("tr.clickable").forEach((tr) =>
+      tr.addEventListener("click", () => showPlayer(tr.dataset.name)));
+  }
+
+  const g = document.getElementById("games");
+  const recent = result.log.slice(-15).reverse();
+  g.innerHTML = recent.length
+    ? recent.map((x) => {
+        const res = x.result === "draw" ? "drew with" : x.result === "a" ? "beat" : "lost to";
+        const d = Math.round(x.aAfter - x.aBefore);
+        return `<tr><td class="muted">${esc(x.date)}</td>
+                <td>${esc(x.a)} ${res} ${esc(x.b)}</td>
+                <td class="num ${d >= 0 ? "up" : "down"}">${d >= 0 ? "+" : ""}${d} / ${-d >= 0 ? "+" : ""}${-d}</td></tr>`;
+      }).join("")
+    : '<tr><td class="muted">No games recorded yet.</td></tr>';
+}
+
+function showPlayer(name) {
+  const p = result.ranked.find((r) => r.name === name);
+  if (!p) return;
+  const h = p.history, w = 600, ht = 90, pad = 6;
+  const min = Math.min(...h), max = Math.max(...h), span = Math.max(max - min, 20);
+  const pts = h.map((v, i) => {
+    const x = h.length === 1 ? w / 2 : pad + (i * (w - 2 * pad)) / (h.length - 1);
+    const y = ht - pad - ((v - min) / span) * (ht - 2 * pad);
+    return x.toFixed(1) + "," + y.toFixed(1);
+  }).join(" ");
+  const games = result.log.filter((x) => x.a === name || x.b === name).slice(-8).reverse();
+  document.getElementById("detail").innerHTML = `
+    <div class="card">
+      <b>${esc(name)}</b> · rank #${p.rank} · ${Math.round(p.rating)} Elo · ${p.wins}W ${p.losses}L ${p.draws}D
+      <svg class="spark" viewBox="0 0 ${w} ${ht}" preserveAspectRatio="none">
+        <polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="2.5" vector-effect="non-scaling-stroke"/>
+      </svg>
+      ${games.map((x) => {
+        const me = x.a === name, opp = me ? x.b : x.a;
+        const out = x.result === "draw" ? "Draw" : (x.result === "a") === me ? "Win" : "Loss";
+        return `<div class="sub">${esc(x.date)} · ${out} vs ${esc(opp)}</div>`;
+      }).join("")}
+    </div>`;
+  document.getElementById("detail").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+fetch("data.json?_=" + Date.now())
+  .then((r) => r.json())
+  .then(render)
+  .catch(() => (document.getElementById("board").innerHTML = '<tr><td class="err">Could not load ladder data.</td></tr>'));
+</script>
+</body>
+</html>
