@@ -48,5 +48,12 @@
     "Jay Wang",
     "jay"
   ],
-  "games": []
+  "games": [
+    {
+      "date": "2026-10-15",
+      "a": "Eric Liu",
+      "b": "Jay Wang",
+      "result": "b"
+    }
+  ]
 }
